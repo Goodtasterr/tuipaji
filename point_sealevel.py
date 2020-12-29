@@ -2,8 +2,9 @@ import open3d as o3d
 import numpy as np
 import os
 import PIL.Image as Image
-
-
+import seaborn as sns
+import matplotlib.pyplot as plt
+import cv2 as cv
 def pc_colors(arr):
     list = np.asarray([
         # [100, 100, 100],
@@ -18,35 +19,41 @@ def pc_colors(arr):
         colors.append(list[i])
 
     return np.asarray(colors)/255
+def quat2rotation(Q):
+    w, x, y, z = Q
+    R = [[1-2*(y**2)-2*(z**2),2*x*y+2*w*z,2*x*z-2*w*y],
+          [2*x*y-2*w*z,1-2*(x**2)-2*(z**2),2*y*z+2*w*x],
+          [2*x*z+2*w*y,2*y*z-2*w*x,1-2*(x**2)-2*(y**2)]]
+    # q0, q1, q2, q3 = Q
+    # R = [[q0**2 + q1**2 - q2**2 - q3**2, 2 * (q1 * q2 - q0 * q3), 2 * (q1 * q3 + q0 * q2)],
+    # [2 * (q1 * q2 + q0 * q3),q0**2 - q1 **2 + q2**2 - q3**2,2 * (q2 * q3 - q0 * q1)],
+    # [2 * (q1 * q3 - q0 * q2), 2 * (q2 * q3 + q0 * q1), q0**2 - q1**2 - q2**2 + q3**2]]
+
+    return np.asarray(R).astype(np.float32)
 
 def tuipaji():
     mesh = o3d.geometry.TriangleMesh.create_coordinate_frame()
     mesh.scale(10, center=mesh.get_center())
 
-    w,x,y,z =   -0.593, 0.113, 0.096, 0.792
-    RR = [[1-2*(y**2)-2*(z**2),2*x*y+2*w*z,2*x*z-2*w*y],
-          [2*x*y-2*w*z,1-2*(x**2)-2*(z**2),2*y*z+2*w*x],
-          [2*x*z+2*w*y,2*y*z-2*w*x,1-2*(x**2)-2*(y**2)]]
+    # Q = np.asarray((-0.593, 0.113, 0.096, 0.792)).astype(np.float32) #last time quater
+    Q = np.asarray((-0.091, -0.108,  -0.797, 0.588)).astype(np.float32)
+    RR = quat2rotation(Q)
 
-
-    # q0,q1,q2,q3 = -0.593, 0.113, 0.096, 0.792
-    #
-    #
-    # RR = [[q0**2 + q1**2 - q2**2 - q3**2, 2 * (q1 * q2 - q0 * q3), 2 * (q1 * q3 + q0 * q2)],
-    # [2 * (q1 * q2 + q0 * q3),q0**2 - q1 **2 + q2**2 - q3**2,2 * (q2 * q3 - q0 * q1)],
-    # [2 * (q1 * q3 - q0 * q2), 2 * (q2 * q3 + q0 * q1), q0**2 - q1**2 - q2**2 + q3**2]]
-    print(RR)
+    print(RR,np.linalg.inv(RR)) #逆矩阵
 
     def colors(colors_arr,points_number):
-
         return np.repeat(colors_arr,points_number,axis=0)
 
-    pcd = o3d.io.read_point_cloud("./tuipaji_data/1607313674.393412828.pcd")
+    # pcd = o3d.io.read_point_cloud("./tuipaji_data/1607313674.393412828.pcd")
+    pcd = o3d.io.read_point_cloud("./1222/1608617787805101.pcd")
     pcd_points = np.asarray(pcd.points)
-    pcd_points_trans = np.dot(pcd_points,np.asarray(RR))
+
+    trans = [[0,1,0],[0,0,1],[-1,0,0]] #这里8种都试过了，不是就这个效果么-》
+    pcd_points_trans = np.dot(pcd_points,(np.asarray(RR)))
+    pcd_points_trans = np.dot(pcd_points_trans,np.asarray(trans))
     points_number = pcd_points.shape[0]
     pcd.colors = o3d.utility.Vector3dVector(np.repeat([[0,1,1]],points_number,axis=0))
-
+# 这图片怎么关
     #delta_h, delta_x
     delta_h = 1
     delta_x = 0.04
@@ -78,17 +85,29 @@ def tuipaji():
     pixel_points = (pcd_points_trans[:,1:]/resolution).astype(np.int)-1
     pixel_points[:,0]+=bias_width
     pixel_points[:,1]+=bias_long
-    map_step = np.zeros([len(width_steps), len(long_steps)])-3
+    bias_step = 5
+    map_step = np.zeros([len(width_steps), len(long_steps)])-bias_step
     for i in range(pixel_points.shape[0]):
         if (pcd_points_trans[i][0]>map_step[pixel_points[i,0],pixel_points[i,1]]):
             map_step[pixel_points[i,0],pixel_points[i,1]]=pcd_points_trans[i][0]
     # print(map_step.min())
     print(time.time() - t0)
-    map_step2int = ((map_step+3)*14).astype(np.uint8)
+    print(((map_step+bias_step)*13).max(),((map_step+bias_step)*10).min())
+    map_step2int = ((map_step+bias_step)*13).astype(np.uint8)
+    kernel = np.ones((7, 7), np.float32) / 49
+    pool_idx = map_step2int<0.1
+    map_pool = map_step2int+0.0001
+    for i in range(4):
+        map_pool = cv.filter2D(map_pool, -1, kernel)
+    map_show = map_step2int + map_pool*pool_idx
+    print('map_show value:',((map_pool).max(), (map_pool).min()))
+    sns.set()
+    ax = sns.heatmap(map_show,cmap='seismic',center=0,robust=True)
+    plt.show()#这行显示，运行时怎么关闭那个窗口
 
     print(type(map_step2int),map_step2int.shape)
     map2img = Image.fromarray(map_step2int)
-    map2img.show()
+    # map2img.show()
 
 
     indexs = np.zeros((pcd_points_trans.shape[0])).astype(np.int)
@@ -115,4 +134,3 @@ if __name__ == '__main__':
     # im_arr_toimg = Image.fromarray(im_arr)
     # im_arr_toimg.show()
     # print(type(im_arr),im_arr.shape)
-
